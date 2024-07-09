@@ -58,7 +58,8 @@ public sealed interface Json {
     return new Object((Map<java.lang.String, Json>) members); // safe
   }
 
-  static Object.Builder object() {
+  // IDEA-356054
+  static Json.Object.Builder object() {
     return new Object.Builder();
   }
 
