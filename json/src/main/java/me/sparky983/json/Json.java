@@ -25,9 +25,9 @@ public sealed interface Json {
 
   static Json read(final java.lang.String input) throws JsonParseException {
     try {
-      return read(new StringReader(input));
+      return read(new CheapStringReader(input));
     } catch (final IOException e) {
-      throw new AssertionError("StringReader must not perform IO operations", e);
+      throw new AssertionError("CheapStringReader must not perform IO operations", e);
     }
   }
 
