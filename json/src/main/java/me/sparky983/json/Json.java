@@ -6,21 +6,23 @@ import java.io.StringWriter;
 import java.io.Writer;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 public sealed interface Json {
-  Null NULL = new Null();
-
-  static Json read(final Reader input) throws IOException, JsonParseException {
+  static @Nullable Json read(final Reader input) throws IOException, JsonParseException {
     try (final JsonReader reader = new JsonReader(input)) {
       return reader.readJson();
     }
   }
 
-  static Json read(final java.lang.String input) throws JsonParseException {
+  static @Nullable Json read(final java.lang.String input) throws JsonParseException {
     try {
       return read(new CheapStringReader(input));
     } catch (final IOException e) {
@@ -28,13 +30,13 @@ public sealed interface Json {
     }
   }
 
-  static void write(final Json json, final Writer output) throws IOException {
+  static void write(final @Nullable Json json, final Writer output) throws IOException {
     try (final JsonWriter writer = new JsonWriter(output, null)) {
       writer.writeJson(json);
     }
   }
 
-  static java.lang.String write(final Json json) {
+  static java.lang.String write(final @Nullable Json json) {
     final StringWriter stringWriter = new StringWriter();
     try (final JsonWriter jsonWriter = new JsonWriter(stringWriter, null)) {
       jsonWriter.writeJson(json);
@@ -45,7 +47,7 @@ public sealed interface Json {
   }
 
   @SuppressWarnings("unchecked")
-  static Object object(final Map<? extends java.lang.String, ? extends Json> members) {
+  static Object object(final Map<? extends java.lang.String, ? extends @Nullable Json> members) {
     if (members.isEmpty()) { // implicit null check
       return Object.EMPTY;
     }
@@ -59,15 +61,15 @@ public sealed interface Json {
   }
 
   @SuppressWarnings("unchecked")
-  static Array array(final List<? extends Json> elements) {
+  static Array array(final List<? extends @Nullable Json> elements) {
     if (elements.isEmpty()) { // implicit null check
       return Array.EMPTY;
     }
 
-    return new Array((List<Json>) elements); // safe
+    return new Array((List<@Nullable Json>) elements); // safe
   }
 
-  static Array array(final Json... elements) {
+  static Array array(final @Nullable Json... elements) {
     if (elements.length == 0) {
       return Array.EMPTY;
     }
@@ -111,7 +113,7 @@ public sealed interface Json {
     return Bool.FALSE;
   }
 
-  record Object(Map<java.lang.String, Json> members) implements Json {
+  record Object(Map<java.lang.String, @Nullable Json> members) implements Json {
     static final Object EMPTY = new Object(Map.of());
 
     public Object {
@@ -134,11 +136,10 @@ public sealed interface Json {
 
     // Not thread-safe
     public static final class Builder {
-      private LinkedHashMap<java.lang.String, Json> values = null;
+      private @Nullable LinkedHashMap<java.lang.String, @Nullable Json> values = null;
 
-      public Builder put(final java.lang.String key, final Json value) {
+      public Builder put(final java.lang.String key, final @Nullable Json value) {
         Objects.requireNonNull(key, "key");
-        Objects.requireNonNull(value, "value");
 
         if (values == null) {
           values = new LinkedHashMap<>();
@@ -152,7 +153,7 @@ public sealed interface Json {
       }
 
       public Object build() {
-        final LinkedHashMap<java.lang.String, Json> values = this.values;
+        final LinkedHashMap<java.lang.String, @Nullable Json> values = this.values;
 
         if (values == null) {
           return EMPTY;
@@ -163,19 +164,17 @@ public sealed interface Json {
     }
   }
 
-  record Array(List<Json> elements) implements Json {
+  record Array(List<@Nullable Json> elements) implements Json {
     static final Array EMPTY = new Array(List.of());
 
-    public Array(final List<Json> elements) {
+    public Array {
       if (elements instanceof InternalUnmodifiableList) {
-        this.elements = elements;
-      } else {
-        this.elements = List.copyOf(elements);
+        elements = Collections.unmodifiableList(new ArrayList<>(elements));
       }
     }
 
-    public Array(final Json... values) {
-      this(List.of(values));
+    public Array(final @Nullable Json... values) {
+      this(Arrays.asList(values));
     }
 
     @Override
@@ -233,13 +232,6 @@ public sealed interface Json {
       return this == TRUE;
     }
 
-    @Override
-    public java.lang.String toString() {
-      return write(this);
-    }
-  }
-
-  record Null() implements Json {
     @Override
     public java.lang.String toString() {
       return write(this);

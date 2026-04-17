@@ -4,15 +4,16 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A marker for an unmodifiable view of a map that is never modified after creation. Used to avoid
  * copying in the {@link Json.Object} constructor.
  */
-final class InternalUnmodifiableMap implements Map<String, Json> {
-  private final Map<String, Json> delegate;
+final class InternalUnmodifiableMap implements Map<String, @Nullable Json> {
+  private final Map<String, @Nullable Json> delegate;
 
-  InternalUnmodifiableMap(final Map<String, Json> delegate) {
+  InternalUnmodifiableMap(final Map<String, @Nullable Json> delegate) {
     this.delegate = Collections.unmodifiableMap(delegate);
   }
 
@@ -37,22 +38,22 @@ final class InternalUnmodifiableMap implements Map<String, Json> {
   }
 
   @Override
-  public Json get(final Object key) {
+  public @Nullable Json get(final Object key) {
     return delegate.get(key);
   }
 
   @Override
-  public Json put(final String key, final Json value) {
+  public @Nullable Json put(final String key, final @Nullable Json value) {
     return delegate.put(key, value);
   }
 
   @Override
-  public Json remove(final Object key) {
+  public @Nullable Json remove(final @Nullable Object key) {
     return delegate.remove(key);
   }
 
   @Override
-  public void putAll(final Map<? extends String, ? extends Json> m) {
+  public void putAll(final Map<? extends String, ? extends @Nullable Json> m) {
     delegate.putAll(m);
   }
 
@@ -67,17 +68,17 @@ final class InternalUnmodifiableMap implements Map<String, Json> {
   }
 
   @Override
-  public Collection<Json> values() {
+  public Collection<@Nullable Json> values() {
     return delegate.values();
   }
 
   @Override
-  public Set<Entry<String, Json>> entrySet() {
+  public Set<Entry<String, @Nullable Json>> entrySet() {
     return delegate.entrySet();
   }
 
   @Override
-  public boolean equals(final Object o) {
+  public boolean equals(final @Nullable Object o) {
     return delegate.equals(o);
   }
 

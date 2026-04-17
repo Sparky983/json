@@ -5,6 +5,7 @@ import java.io.Writer;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 final class JsonWriter implements AutoCloseable {
   // Implementation notes:
@@ -14,32 +15,32 @@ final class JsonWriter implements AutoCloseable {
   //  complex so copying would be too annoying to maintain.
 
   private final Writer writer;
-  private final String indentation;
+  private final @Nullable String indentation;
 
-  JsonWriter(final Writer writer, final String indentation) {
+  JsonWriter(final Writer writer, final @Nullable String indentation) {
     this.writer = writer;
     this.indentation = indentation;
   }
 
-  void writeJson(final Json json) throws IOException {
+  void writeJson(final @Nullable Json json) throws IOException {
     writeJson(json, 0);
   }
 
-  private void writeJson(final Json json, int level) throws IOException {
+  private void writeJson(final @Nullable Json json, int level) throws IOException {
     switch (json) {
       case Json.Object object -> writeObject(object, level);
       case Json.Array array -> writeArray(array, level);
       case Json.String(String string) -> writeString(string);
       case Json.Integer integer -> writeInteger(integer);
       case Json.Decimal decimal -> writeDecimal(decimal);
-      case Json.Null jsonNull -> writeNull();
       case Json.Bool.TRUE -> writeTrue();
       case Json.Bool.FALSE -> writeFalse();
+      case null -> writeNull();
     }
   }
 
   private void writeObject(final Json.Object object, final int level) throws IOException {
-    final Map<String, Json> members = object.members();
+    final Map<String, @Nullable Json> members = object.members();
 
     writer.write('{');
 
@@ -73,7 +74,7 @@ final class JsonWriter implements AutoCloseable {
   }
 
   private void writeArray(final Json.Array array, final int level) throws IOException {
-    final List<Json> elements = array.elements();
+    final List<@Nullable Json> elements = array.elements();
     final int size = elements.size();
 
     writer.write('[');
