@@ -44,7 +44,7 @@ class JsonTest {
                   .put("string", Json.string("a string"))
                   .put("true", Json.Bool.TRUE)
                   .put("false", Json.Bool.FALSE)
-                  .put("null", Json.NULL)
+                  .put("null", null)
                   .build())
           .put(
               "array",
@@ -54,13 +54,13 @@ class JsonTest {
                   Json.string("a string"),
                   Json.Bool.TRUE,
                   Json.Bool.FALSE,
-                  Json.NULL))
+                  null))
           .put("integer", Json.integer(1))
           .put("decimal", Json.decimal(1.0))
           .put("string", Json.string("a string"))
           .put("true", Json.Bool.TRUE)
           .put("false", Json.Bool.FALSE)
-          .put("null", Json.NULL)
+          .put("null", null)
           .build();
 
   @Test

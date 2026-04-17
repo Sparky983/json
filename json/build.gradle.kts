@@ -13,6 +13,8 @@ dependencies {
     jmh("org.openjdk.jmh:jmh-generator-bytecode:0.9")
     jmh("com.google.code.gson:gson:2.10.1")
 
+    implementation("org.jspecify:jspecify:1.0.0")
+
     testImplementation(platform("org.junit:junit-bom:5.9.1"))
     testImplementation("org.junit.jupiter:junit-jupiter")
 }

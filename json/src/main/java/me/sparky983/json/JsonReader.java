@@ -7,6 +7,7 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 final class JsonReader implements AutoCloseable {
   private static final String UNKNOWN_LITERAL = "Unknown literal";
@@ -24,7 +25,7 @@ final class JsonReader implements AutoCloseable {
     this.reader = reader;
   }
 
-  Json readJson() throws IOException, JsonParseException {
+  @Nullable Json readJson() throws IOException, JsonParseException {
     final Json json = readElement();
     if (peek() != -1) {
       throw new JsonParseException("Expected end of input");
@@ -32,14 +33,14 @@ final class JsonReader implements AutoCloseable {
     return json;
   }
 
-  private Json readElement() throws IOException, JsonParseException {
+  private @Nullable Json readElement() throws IOException, JsonParseException {
     skipWhitespace();
     final Json value = readValue();
     skipWhitespace();
     return value;
   }
 
-  private Json readValue() throws IOException, JsonParseException {
+  private @Nullable Json readValue() throws IOException, JsonParseException {
     return switch (peek()) {
       case '{' -> readObject();
       case '[' -> readArray();
@@ -62,7 +63,7 @@ final class JsonReader implements AutoCloseable {
       return Json.Object.EMPTY;
     }
 
-    final LinkedHashMap<String, Json> members = new LinkedHashMap<>();
+    final LinkedHashMap<String, @Nullable Json> members = new LinkedHashMap<>();
 
     while (true) {
       if (peek() != '"') {
@@ -103,7 +104,7 @@ final class JsonReader implements AutoCloseable {
     consume();
 
     // This unmodifiable map implementations isn't copied by the Json.Object constructor
-    final Map<String, Json> unmodifiableMap = new InternalUnmodifiableMap(members);
+    final Map<String, @Nullable Json> unmodifiableMap = new InternalUnmodifiableMap(members);
 
     return new Json.Object(unmodifiableMap);
   }
@@ -117,7 +118,7 @@ final class JsonReader implements AutoCloseable {
       return Json.array();
     }
 
-    final ArrayList<Json> members = new ArrayList<>();
+    final ArrayList<@Nullable Json> members = new ArrayList<>();
 
     while (true) {
       members.add(readElement());
@@ -369,7 +370,7 @@ final class JsonReader implements AutoCloseable {
     return Json.Bool.FALSE;
   }
 
-  private Json.Null readNull() throws IOException, JsonParseException {
+  private @Nullable Json readNull() throws IOException, JsonParseException {
     consume(); // n
     final int u = peek();
     consume();
@@ -382,7 +383,7 @@ final class JsonReader implements AutoCloseable {
       throw new JsonParseException(UNKNOWN_LITERAL);
     }
 
-    return Json.NULL;
+    return null;
   }
 
   private void skipWhitespace() throws IOException {
