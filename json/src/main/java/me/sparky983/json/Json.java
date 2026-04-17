@@ -2,7 +2,6 @@ package me.sparky983.json;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.math.BigDecimal;
@@ -23,9 +22,9 @@ public sealed interface Json {
 
   static Json read(final java.lang.String input) throws JsonParseException {
     try {
-      return read(new StringReader(input));
+      return read(new CheapStringReader(input));
     } catch (final IOException e) {
-      throw new AssertionError("StringReader must not perform IO operations", e);
+      throw new AssertionError("CheapStringReader must not perform IO operations", e);
     }
   }
 
