@@ -25,9 +25,16 @@ final class CheapStringReader extends Reader {
   }
 
   @Override
-  public int read(final char[] charBuffer, int off, int len) throws IOException {
-    // This operation does not need to be implemented as it is unused
-    throw new UnsupportedOperationException("Operation not implemented");
+  public int read(final char[] buf, int off, int len) throws IOException {
+    if (len == 0) {
+      return 0;
+    }
+    if (position >= length)
+      return -1;
+    int n = Math.min(length - position, len);
+    input.getChars(position, position + n, buf, off);
+    position += n;
+    return n;
   }
 
   @Override

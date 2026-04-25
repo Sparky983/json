@@ -18,7 +18,7 @@ import org.jspecify.annotations.Nullable;
 public sealed interface Json {
   static @Nullable Json read(final Reader input) throws IOException, JsonParseException {
     try (final JsonReader reader = new JsonReader(input)) {
-      return reader.readJson();
+      return JsonAdapter.read(reader);
     }
   }
 
@@ -32,14 +32,14 @@ public sealed interface Json {
 
   static void write(final @Nullable Json json, final Writer output) throws IOException {
     try (final JsonWriter writer = new JsonWriter(output, null)) {
-      writer.writeJson(json);
+      JsonAdapter.write(writer, json);
     }
   }
 
   static java.lang.String write(final @Nullable Json json) {
     final StringWriter stringWriter = new StringWriter();
     try (final JsonWriter jsonWriter = new JsonWriter(stringWriter, null)) {
-      jsonWriter.writeJson(json);
+      JsonAdapter.write(jsonWriter, json);
     } catch (final IOException e) {
       throw new AssertionError("StringWriter must not perform IO operations", e);
     }
@@ -221,7 +221,7 @@ public sealed interface Json {
     @Override
     public java.lang.String toString() {
       return write(this);
-      }
+    }
   }
 
   enum Bool implements Json {

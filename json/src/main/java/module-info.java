@@ -4,5 +4,6 @@ import org.jspecify.annotations.NullMarked;
 @NullMarked
 module me.sparky983.json {
   requires static org.jspecify;
+  requires static org.jetbrains.annotations;
   exports me.sparky983.json;
 }
