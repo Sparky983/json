@@ -1406,6 +1406,17 @@ class JsonReaderTest {
     assertThrows(JsonParseException.class, reader::peek);
   }
 
+  // transition from OBJECT_EXPECT_VALUE when end
+  @ParameterizedTest
+  @ValueSource(strings = {"{\"field_name\":]}", "{\"field_name\":}", "{\"field_name\": \r\t\n]}"})
+  void testPeek_ObjectValueWhenEnd_Throws(final String json) throws Exception {
+    final JsonReader reader = newReader(json);
+    reader.startObject();
+    assumeTrue("field_name".equals(reader.readField()));
+
+    assertThrows(JsonParseException.class, reader::peek);
+  }
+
   // transition from DONE
   @Test
   void testPeek_Done_Throws() throws Exception {
@@ -1465,6 +1476,15 @@ class JsonReaderTest {
     assertThrows(JsonParseException.class, reader::peek);
   }
 
+  // transition from TOP_LEVEL when end
+  @ParameterizedTest
+  @ValueSource(strings = {"]", "}", " \r\t\n]"})
+  void testPeek_TopLevelWhenEnd_Throws(final String json) {
+    final JsonReader reader = newReader(json);
+
+    assertThrows(JsonParseException.class, reader::peek);
+  }
+
   // transition from ARRAY_EXPECT_VALUE_OR_END when end
   @Test
   void testPeek_ArrayEnd_Throws() throws Exception {
@@ -1492,6 +1512,17 @@ class JsonReaderTest {
     assumeTrue(reader.readInteger().intValueExact() == 0);
 
     assertThrows(IllegalStateException.class, reader::peek);
+  }
+
+  // transition from ARRAY_EXPECT_COMMA_OR_END when comma and end
+  @ParameterizedTest
+  @ValueSource(strings = {"[0,]", "[0,}", "[0, \r\t\n]"})
+  void testPeek_ArraySubsequentWhenCommaEnd_Throws(final String json) throws Exception {
+    final JsonReader reader = newReader(json);
+    reader.startArray();
+    assumeTrue(reader.readInteger().intValueExact() == 0);
+
+    assertThrows(JsonParseException.class, reader::peek);
   }
 
   // transition from ARRAY_EXPECT_COMMA_OR_END when EOF

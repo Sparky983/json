@@ -460,7 +460,15 @@ final class JsonReader implements Closeable {
       case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-' -> Token.NUMBER;
       case 't', 'f' -> Token.BOOLEAN;
       case 'n' -> Token.NULL;
-      case ']' -> throw new IllegalStateException("No value to peek, check for hasNext() before peeking");
+      case ']' -> {
+        switch (peekState()) {
+          // If a value is required (e.g. after a comma), the array end is a syntax error rather
+          // than a misuse of the reader
+          case ARRAY_EXPECT_VALUE_OR_END, ARRAY_EXPECT_COMMA_OR_END ->
+            throw new IllegalStateException("No value to peek, check for hasNext() before peeking");
+          default -> throw new JsonParseException("Unexpected character " + (char) lookahead);
+        }
+      }
       default ->
           throw new JsonParseException("Unexpected character " + (char) lookahead);
     };

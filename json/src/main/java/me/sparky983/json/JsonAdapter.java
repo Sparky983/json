@@ -24,7 +24,15 @@ final class JsonAdapter {
         reader.startObject();
         final Map<String, @Nullable Json> members = new LinkedHashMap<>();
         while (reader.hasNext()) {
-          members.put(reader.readField(), readJson(reader));
+          final String field = reader.readField();
+          // The spec does not require that members be unique, however, we have added this
+          //  requirement to avoid the API being too confusing. I don't think there is any real use
+          //  case for duplicate members anyway.
+          // containsKey is used rather than checking the result of put since values may be null
+          if (members.containsKey(field)) {
+            throw new JsonParseException("Duplicate member \"" + field + "\"");
+          }
+          members.put(field, readJson(reader));
         }
         reader.endObject();
         yield Json.object(new InternalUnmodifiableMap(members));
