@@ -8,7 +8,6 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -169,8 +168,10 @@ public sealed interface Json {
     static final Array EMPTY = new Array(List.of());
 
     public Array {
-      if (elements instanceof InternalUnmodifiableList) {
-        elements = Collections.unmodifiableList(new ArrayList<>(elements));
+      if (elements.isEmpty()) {
+        elements = List.of();
+      } else if (!(elements instanceof InternalUnmodifiableList)) {
+        elements = new InternalUnmodifiableList(new ArrayList<>(elements));
       }
     }
 

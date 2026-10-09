@@ -4,11 +4,12 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+import org.jspecify.annotations.Nullable;
 
-final class InternalUnmodifiableList implements List<Json> {
-  private final List<Json> delegate;
+final class InternalUnmodifiableList implements List<@Nullable Json> {
+  private final List<@Nullable Json> delegate;
 
-  InternalUnmodifiableList(final List<Json> delegate) {
+  InternalUnmodifiableList(final List<@Nullable Json> delegate) {
     this.delegate = delegate;
   }
 
@@ -28,8 +29,8 @@ final class InternalUnmodifiableList implements List<Json> {
   }
 
   @Override
-  public Iterator<Json> iterator() {
-    final Iterator<Json> delegate = this.delegate.iterator();
+  public Iterator<@Nullable Json> iterator() {
+    final Iterator<@Nullable Json> delegate = this.delegate.iterator();
 
     return new Iterator<>() {
       @Override
@@ -38,7 +39,7 @@ final class InternalUnmodifiableList implements List<Json> {
       }
 
       @Override
-      public Json next() {
+      public @Nullable Json next() {
         return delegate.next();
       }
     };
@@ -55,7 +56,7 @@ final class InternalUnmodifiableList implements List<Json> {
   }
 
   @Override
-  public boolean add(final Json json) {
+  public boolean add(final @Nullable Json json) {
     throw new UnsupportedOperationException();
   }
 
@@ -70,12 +71,12 @@ final class InternalUnmodifiableList implements List<Json> {
   }
 
   @Override
-  public boolean addAll(final Collection<? extends Json> c) {
+  public boolean addAll(final Collection<? extends @Nullable Json> c) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public boolean addAll(final int index, final Collection<? extends Json> c) {
+  public boolean addAll(final int index, final Collection<? extends @Nullable Json> c) {
     throw new UnsupportedOperationException();
   }
 
@@ -95,22 +96,22 @@ final class InternalUnmodifiableList implements List<Json> {
   }
 
   @Override
-  public Json get(final int index) {
+  public @Nullable Json get(final int index) {
     return delegate.get(index);
   }
 
   @Override
-  public Json set(final int index, final Json element) {
+  public @Nullable Json set(final int index, final @Nullable Json element) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public void add(final int index, final Json element) {
+  public void add(final int index, final @Nullable Json element) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public Json remove(final int index) {
+  public @Nullable Json remove(final int index) {
     throw new UnsupportedOperationException();
   }
 
@@ -125,13 +126,13 @@ final class InternalUnmodifiableList implements List<Json> {
   }
 
   @Override
-  public ListIterator<Json> listIterator() {
+  public ListIterator<@Nullable Json> listIterator() {
     return listIterator(0);
   }
 
   @Override
-  public ListIterator<Json> listIterator(final int index) {
-    final ListIterator<Json> iterator = this.delegate.listIterator(index);
+  public ListIterator<@Nullable Json> listIterator(final int index) {
+    final ListIterator<@Nullable Json> iterator = this.delegate.listIterator(index);
 
     return new ListIterator<>() {
       @Override
@@ -140,7 +141,7 @@ final class InternalUnmodifiableList implements List<Json> {
       }
 
       @Override
-      public Json next() {
+      public @Nullable Json next() {
         return iterator.next();
       }
 
@@ -150,7 +151,7 @@ final class InternalUnmodifiableList implements List<Json> {
       }
 
       @Override
-      public Json previous() {
+      public @Nullable Json previous() {
         return iterator.previous();
       }
 
@@ -170,19 +171,34 @@ final class InternalUnmodifiableList implements List<Json> {
       }
 
       @Override
-      public void set(final Json json) {
+      public void set(final @Nullable Json json) {
         throw new UnsupportedOperationException();
       }
 
       @Override
-      public void add(final Json json) {
+      public void add(final @Nullable Json json) {
         throw new UnsupportedOperationException();
       }
     };
   }
 
   @Override
-  public List<Json> subList(final int fromIndex, final int toIndex) {
+  public List<@Nullable Json> subList(final int fromIndex, final int toIndex) {
     return new InternalUnmodifiableList(delegate.subList(fromIndex, toIndex));
+  }
+
+  @Override
+  public boolean equals(final @Nullable Object o) {
+    return delegate.equals(o);
+  }
+
+  @Override
+  public int hashCode() {
+    return delegate.hashCode();
+  }
+
+  @Override
+  public String toString() {
+    return delegate.toString();
   }
 }
