@@ -6,8 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.util.Map;
+import java.util.stream.Stream;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class JsonTest {
@@ -66,6 +70,18 @@ class JsonTest {
           .put("null", null)
           .build();
 
+  static Stream<@Nullable Json> provideJsonValues() {
+    return Stream.of(
+        Json.integer(1),
+        Json.decimal(1.0),
+        Json.string("a string"),
+        Json.Bool.TRUE,
+        Json.Bool.FALSE,
+        null,
+        Json.object(Map.of()),
+        Json.array());
+  }
+
   @Test
   void testJsonRead_Reader() throws JsonParseException, IOException {
     final Json json = Json.read(new StringReader(JSON_STRING_COMPACT));
@@ -112,5 +128,13 @@ class JsonTest {
     final String json = Json.write(JSON_OBJECT);
 
     assertEquals(JSON_STRING_COMPACT, json);
+  }
+
+  @ParameterizedTest
+  @MethodSource("provideJsonValues")
+  void testJsonObjectBuilderPut_DuplicateMember_Throws(final @Nullable Json json) {
+    final Json.Object.Builder builder = Json.object().put("key", json);
+
+    assertThrows(IllegalStateException.class, () -> builder.put("key", Json.integer(1)));
   }
 }

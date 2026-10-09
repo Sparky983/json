@@ -145,10 +145,11 @@ public sealed interface Json {
           values = new LinkedHashMap<>();
         }
 
-        if (values.putIfAbsent(key, value) != null) {
+        if (values.containsKey(key)) {
           throw new IllegalStateException("Member \"" + key + "\" has already been added");
         }
 
+        values.put(key, value);
         return this;
       }
 
