@@ -1,210 +1,196 @@
 package me.sparky983.json;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.Reader;
-import java.math.BigDecimal;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import org.jspecify.annotations.Nullable;
+import java.util.Arrays;
+import org.intellij.lang.annotations.MagicConstant;
+import org.jetbrains.annotations.VisibleForTesting;
 
-final class JsonReader implements AutoCloseable {
+final class JsonReader implements Closeable {
+  @VisibleForTesting
+  static final int BUFFER_SIZE = 1024;
   private static final String UNKNOWN_LITERAL = "Unknown literal";
   private static final String UNEXPECTED_EOF = "Unexpected end of input";
 
-  /**
-   * Used internally to represent the state in which no character has been read yet.
-   */
+  /** Used internally to represent the state in which no character has been read yet. */
   private static final int NO_LOOKAHEAD = -2; // -1 indicates the end of the sequence
-  private int lookahead = NO_LOOKAHEAD;
+
+  // Use byte to represent states results in ~5% speed up
+  private static final byte TOP_LEVEL = 1;
+  private static final byte DONE = 2;
+  private static final byte OBJECT_EXPECT_FIELD_OR_END = 3;
+  private static final byte OBJECT_EXPECT_VALUE = 4;
+  private static final byte OBJECT_EXPECT_COMMA_OR_END = 5;
+  private static final byte ARRAY_EXPECT_VALUE = 6;
+  private static final byte ARRAY_EXPECT_VALUE_OR_END = 7;
+  private static final byte ARRAY_EXPECT_COMMA_OR_END = 8;
 
   private final Reader reader;
+  private final char[] buf = new char[BUFFER_SIZE];
+  private int bufPosition = 0;
+  private int bufLimit = 0;
+  /** the position of the next lookahead */
+  private int lookahead = NO_LOOKAHEAD;
 
-  JsonReader(final Reader reader) {
+  // Manage a stack ourselves results in ~5% speed up
+  private byte[] state = new byte[8];
+  private int stateSize = 1;
+
+  JsonReader(Reader reader) {
     this.reader = reader;
+    state[0] = TOP_LEVEL;
   }
 
-  @Nullable Json readJson() throws IOException, JsonParseException {
-    final Json json = readElement();
-    if (peek() != -1) {
-      throw new JsonParseException("Expected end of input");
+  private void beforeValue() throws IOException, JsonParseException {
+    tryInitLookahead();
+
+    // "array": startArray() [ (ARRAY_EXPECT_VALUE_OR_END) readValue()
+    //   1 (ARRAY_EXPECT_COMMA_OR_END) readValue() ,
+    //   2 (ARRAY_EXPECT_COMMA_OR_END) peek() , (ARRAY_EXPECT_VALUE) readValue()
+    //   3 (ARRAY_EXPECT_COMMA_OR_END) endArray() 
+    // ] 
+
+    switch (peekState()) {
+      case TOP_LEVEL, OBJECT_EXPECT_VALUE, ARRAY_EXPECT_VALUE, ARRAY_EXPECT_VALUE_OR_END -> {}
+      case ARRAY_EXPECT_COMMA_OR_END -> {
+        skipWhitespace();
+        expect(',');
+        replaceState(ARRAY_EXPECT_VALUE);
+      }
+      case OBJECT_EXPECT_COMMA_OR_END ->
+          throw new IllegalStateException("Object value read before reading the field name");
+      default -> throw new IllegalStateException();
     }
-    return json;
   }
 
-  private @Nullable Json readElement() throws IOException, JsonParseException {
+  private void afterValue() {
+    switch (popState()) {
+      case ARRAY_EXPECT_VALUE_OR_END, ARRAY_EXPECT_VALUE -> pushState(ARRAY_EXPECT_COMMA_OR_END);
+      case OBJECT_EXPECT_VALUE -> pushState(OBJECT_EXPECT_COMMA_OR_END);
+      case TOP_LEVEL -> {
+        assert stateSize == 0;
+        pushState(DONE);
+      }
+      default -> throw new IllegalStateException();
+    }
+  }
+
+  public String readString() throws IOException, JsonParseException {
+    beforeValue();
+    final String string = readRawString();
+    afterValue();
+    return string;
+  }
+
+  private String readRawString() throws IOException, JsonParseException {
     skipWhitespace();
-    final Json value = readValue();
-    skipWhitespace();
-    return value;
-  }
+    expect('"');
 
-  private @Nullable Json readValue() throws IOException, JsonParseException {
-    return switch (peek()) {
-      case '{' -> readObject();
-      case '[' -> readArray();
-      case '"' -> readString();
-      case '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-' -> readNumber();
-      case 't' -> readTrue();
-      case 'f' -> readFalse();
-      case 'n' -> readNull();
-      case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
-      default -> throw new JsonParseException("Unexpected character \"" + (char) peek() + "\"");
-    };
-  }
-
-  private Json.Object readObject() throws IOException, JsonParseException {
-    consume(); // {
-    skipWhitespace();
-
-    if (peek() == '}') {
-      consume();
-      return Json.Object.EMPTY;
+    if (lookahead == -1) {
+      throw new JsonParseException("Unterminated string");
     }
 
-    final LinkedHashMap<String, @Nullable Json> members = new LinkedHashMap<>();
+    // lazily initialise builder so:
+    // Allocation can be avoided entirely if there are no escape sequences and the whole string
+    // can be read without reaching the buffer limit.
+    // Then, if we either reach an escape sequence of the end of the buffer, we can set the capacity
+    // then, rather than upfront so we have a better idea of the size of the buffer
+    StringBuilder builder = null;
+    int start = bufPosition - 1;
 
-    while (true) {
-      if (peek() != '"') {
-        throw new JsonParseException("Expected a '\"'");
-      }
-      final String key = readString().value();
-
-      skipWhitespace();
-
-      if (peek() != ':') {
-        throw new JsonParseException("Expected a \":\"");
-      }
-
-      consume();
-
-      final Json element = readElement();
-
-      if (members.put(key, element) != null) {
-        // The spec does not require that members be unique, however, we have added this requirement
-        //  to avoid the API being too confusing. I don't think there is any real use case for
-        //  duplicate members anyway.
-        throw new JsonParseException("Duplicate member \"" + key + "\"");
-      }
-
-      skipWhitespace();
-
-      if (peek() != ',') {
-        break;
-      }
-
-      consume();
-      skipWhitespace();
-    }
-
-    if (peek() != '}') {
-      throw new JsonParseException("Expected a \"}\"");
-    }
-    consume();
-
-    // This unmodifiable map implementations isn't copied by the Json.Object constructor
-    final Map<String, @Nullable Json> unmodifiableMap = new InternalUnmodifiableMap(members);
-
-    return new Json.Object(unmodifiableMap);
-  }
-
-  private Json.Array readArray() throws IOException, JsonParseException {
-    consume(); // [
-    skipWhitespace();
-
-    if (peek() == ']') {
-      consume();
-      return Json.array();
-    }
-
-    final ArrayList<@Nullable Json> members = new ArrayList<>();
-
-    while (true) {
-      members.add(readElement());
-
-      skipWhitespace();
-
-      if (peek() != ',') {
-        break;
-      }
-
-      consume();
-      skipWhitespace();
-    }
-    if (peek() != ']') {
-      throw new JsonParseException("Expected a \"]\"");
-    }
-
-    consume();
-
-    return new Json.Array(new InternalUnmodifiableList(members));
-  }
-
-  private Json.String readString() throws IOException, JsonParseException {
-    consume(); // "
-
-    final StringBuilder builder = new StringBuilder();
-
-    while (peek() != '"') {
-      final int c = peek();
-
-      if (c < 0x0020) {
-        if (c == -1) {
-          throw new JsonParseException("Unterminated string");
+    string: while (true) {
+      int end = start;
+      while (end < bufLimit) {
+        final char c = buf[end];
+        if (c < 0x0020) {
+          throw new JsonParseException("Illegal character");
         }
-        throw new JsonParseException("Illegal character" + (char) c);
-      }
-
-      consume();
-
-      if (c == '\\') { // Escape sequence
-        final int type = peek();
-        consume();
-        final char escaped = switch (type) {
-          case '"' -> '"';
-          case '\\' -> '\\';
-          case '/' -> '/';
-          case 'b' -> '\b';
-          case 'f' -> '\f';
-          case 'n' -> '\n';
-          case 'r' -> '\r';
-          case 't' -> '\t';
-          case 'u' -> {
-            final int c1 = peek();
-            consume();
-            final int c2 = peek();
-            consume();
-            final int c3 = peek();
-            consume();
-            final int c4 = peek();
-            consume();
-
-            if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1) {
-              throw new JsonParseException(UNEXPECTED_EOF);
+        switch (c) {
+          case '"' -> {
+            if (builder == null) {
+              final String string = new String(buf, start, end - start);
+              bufPosition = end + 1;
+              consume();
+              return string;
             }
-
-            final int h1 = hexDigit(c1);
-            final int h2 = hexDigit(c2);
-            final int h3 = hexDigit(c3);
-            final int h4 = hexDigit(c4);
-            final int codePoint = (h1 << 12)
-                | (h2 << 8)
-                | (h3 << 4)
-                | h4;
-            yield (char) codePoint;
+            builder.append(buf, start, end - start);
+            bufPosition = end + 1;
+            consume();
+            return builder.toString();
           }
-          case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
-          default -> throw new JsonParseException("Illegal character escape character \"" + type + "\"");
-        };
-        builder.append(escaped);
-      } else {
-        builder.append((char) c);
+          case '\\' -> {
+            if (builder == null) {
+              builder = new StringBuilder(Math.max((end - start + 1) * 2, 16));
+            }
+            builder.append(buf, start, end - start);
+            bufPosition = end + 1;
+            consume();
+            builder.append(readEscapedCharacter());
+            if (lookahead == -1) {
+              throw new JsonParseException("Unterminated string");
+            }
+            start = bufPosition - 1;
+            continue string;
+          }
+        }
+        end++;
       }
-    }
 
-    consume(); // "
-    return Json.string(builder.toString());
+      if (builder == null) {
+        builder = new StringBuilder(Math.max((end - start) * 2, 16));
+      }
+      builder.append(buf, start, end - start);
+      bufPosition = end;
+      consume();
+      if (lookahead == -1) {
+        throw new JsonParseException("Unterminated string");
+      }
+      start = bufPosition - 1;
+    }
+  }
+
+  private char readEscapedCharacter() throws IOException, JsonParseException {
+    final int type = lookahead;
+    consume();
+    return switch (type) {
+      case '"', '\\', '/' -> (char) type;
+      case 'b' -> '\b';
+      case 'f' -> '\f';
+      case 'n' -> '\n';
+      case 'r' -> '\r';
+      case 't' -> '\t';
+      case 'u' -> {
+        final int c1 = lookahead;
+        consume();
+        final int c2 = lookahead;
+        consume();
+        final int c3 = lookahead;
+        consume();
+        final int c4 = lookahead;
+        consume();
+
+        if (c1 == -1 || c2 == -1 || c3 == -1 || c4 == -1) {
+          throw new JsonParseException(UNEXPECTED_EOF);
+        }
+
+        final int h1 = hexDigit(c1);
+        final int h2 = hexDigit(c2);
+        final int h3 = hexDigit(c3);
+        final int h4 = hexDigit(c4);
+        final int codePoint = (h1 << 12)
+                              | (h2 << 8)
+                              | (h3 << 4)
+                              | h4;
+        yield (char) codePoint;
+      }
+      case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
+      default ->
+          throw new JsonParseException("Illegal character escape character \"" + type + "\"");
+    };
   }
 
   private byte hexDigit(int digit) throws JsonParseException {
@@ -229,32 +215,37 @@ final class JsonReader implements AutoCloseable {
     };
   }
 
-  private Json.Number readNumber() throws IOException, JsonParseException {
+  public String readNumber() throws IOException, JsonParseException {
+    beforeValue();
+    skipWhitespace();
     final StringBuilder builder = new StringBuilder();
 
     readInteger(builder);
     final boolean isDecimal = readFraction(builder);
     readExponent(builder);
 
-    final String number = builder.toString();
+    afterValue();
+    return builder.toString();
+  }
 
-    if (isDecimal) {
-      return Json.decimal(new BigDecimal(number));
-    } else {
-      return Json.integer(new BigInteger(number));
-    }
+  public BigInteger readInteger() throws IOException, JsonParseException {
+    beforeValue();
+    skipWhitespace();
+    final StringBuilder builder = new StringBuilder();
+    readInteger(builder);
+    afterValue();
+    return new BigInteger(builder.toString());
   }
 
   private void readInteger(final StringBuilder builder) throws IOException, JsonParseException {
-    if (peek() == '-') {
+    if (lookahead == '-') {
       consume();
       builder.append('-');
     }
 
-    final int first = peek();
+    final int first = lookahead;
 
     switch (first) {
-      case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
       case '0' -> {
         consume();
         builder.append('0');
@@ -263,9 +254,8 @@ final class JsonReader implements AutoCloseable {
         consume();
         builder.append((char) first);
         while (true) {
-          final int digit = peek();
+          final int digit = lookahead;
           switch (digit) {
-            case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
             case '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' -> {
               consume();
               builder.append((char) digit);
@@ -276,12 +266,13 @@ final class JsonReader implements AutoCloseable {
           }
         }
       }
+      case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
       default -> throw new JsonParseException("Unexpected character \"" + (char) first + "\"");
     }
   }
 
   private boolean readFraction(final StringBuilder builder) throws IOException, JsonParseException {
-    if (peek() == '.') {
+    if (lookahead == '.') {
       consume();
       builder.append('.');
     } else {
@@ -293,7 +284,7 @@ final class JsonReader implements AutoCloseable {
   }
 
   private void readExponent(final StringBuilder builder) throws IOException, JsonParseException {
-    final int e = peek();
+    final int e = lookahead;
 
     switch (e) {
       case 'e', 'E' -> {
@@ -305,9 +296,8 @@ final class JsonReader implements AutoCloseable {
       }
     }
 
-    final int sign = peek();
-    switch (peek()) {
-      case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
+    final int sign = lookahead;
+    switch (lookahead) {
       case '-', '+' -> {
         consume();
         builder.append((char) sign);
@@ -317,78 +307,221 @@ final class JsonReader implements AutoCloseable {
     readDigitsAtLeast1(builder);
   }
 
-  private void readDigitsAtLeast1(final StringBuilder builder) throws IOException, JsonParseException {
+  private void readDigitsAtLeast1(final StringBuilder builder)
+      throws IOException, JsonParseException {
     while (true) {
-      final int digit = peek();
+      final int digit = lookahead;
       switch (digit) {
-        case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
         case '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' -> {
           consume();
           builder.append((char) digit);
-          switch (peek()) {
+          switch (lookahead) {
             case '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' -> {}
             default -> {
               return;
             }
           }
         }
+        case -1 -> throw new JsonParseException(UNEXPECTED_EOF);
+        default -> throw new JsonParseException("Unexpected character \"" + (char) digit + "\"");
       }
     }
   }
 
-  private Json.Bool readTrue() throws IOException, JsonParseException {
-    consume(); // t
-    final int r = peek();
+  public boolean readBoolean() throws IOException, JsonParseException {
+    beforeValue();
+    skipWhitespace();
+    final boolean value = switch (lookahead) {
+      case 't' -> {
+        readTrue();
+        yield true;
+      }
+      case 'f' -> {
+        readFalse();
+        yield false;
+      }
+      default -> throw new JsonParseException("Expected a boolean (true/false)");
+    };
+    afterValue();
+    return value;
+  }
+
+  private void readTrue() throws IOException, JsonParseException {
+    assert lookahead == 't';
     consume();
-    final int u  = peek();
+    final int r = lookahead;
     consume();
-    final int e = peek();
+    final int u = lookahead;
+    consume();
+    final int e = lookahead;
     consume();
 
     if (r != 'r' || u != 'u' || e != 'e') {
       throw new JsonParseException(UNKNOWN_LITERAL);
     }
-
-    return Json.Bool.TRUE;
   }
 
-  private Json.Bool readFalse() throws IOException, JsonParseException {
-    consume(); // f
-    final int a = peek();
+  private void readFalse() throws IOException, JsonParseException {
+    assert lookahead == 'f';
     consume();
-    final int l  = peek();
+    final int a = lookahead;
     consume();
-    final int s = peek();
+    final int l = lookahead;
     consume();
-    final int e = peek();
+    final int s = lookahead;
+    consume();
+    final int e = lookahead;
     consume();
 
     if (a != 'a' || l != 'l' || s != 's' || e != 'e') {
       throw new JsonParseException(UNKNOWN_LITERAL);
     }
-
-    return Json.Bool.FALSE;
   }
 
-  private @Nullable Json readNull() throws IOException, JsonParseException {
-    consume(); // n
-    final int u = peek();
+  public void readNull() throws IOException, JsonParseException {
+    beforeValue();
+    skipWhitespace();
+    final int n = lookahead;
     consume();
-    final int l1 = peek();
+    final int u = lookahead;
     consume();
-    final int l2 = peek();
+    final int l1 = lookahead;
+    consume();
+    final int l2 = lookahead;
     consume();
 
-    if (u != 'u' || l1 != 'l' || l2 != 'l') {
+    if (n != 'n' || u != 'u' || l1 != 'l' || l2 != 'l') {
       throw new JsonParseException(UNKNOWN_LITERAL);
     }
+    afterValue();
+  }
 
-    return null;
+  public void startObject() throws JsonParseException, IOException {
+    beforeValue();
+    skipWhitespace();
+    expect('{');
+    pushState(OBJECT_EXPECT_FIELD_OR_END);
+  }
+
+  public void endObject() throws JsonParseException, IOException {
+    final byte state = peekState();
+    if (state != OBJECT_EXPECT_COMMA_OR_END && state != OBJECT_EXPECT_FIELD_OR_END) {
+      throw new IllegalStateException("Cannot end object");
+    }
+    popState();
+    skipWhitespace();
+    expect('}');
+    afterValue();
+  }
+
+  public void startArray() throws JsonParseException, IOException {
+    beforeValue();
+    skipWhitespace();
+    expect('[');
+    pushState(ARRAY_EXPECT_VALUE_OR_END);
+  }
+
+  public void endArray() throws JsonParseException, IOException {
+    final byte state = peekState();
+    if (state != ARRAY_EXPECT_COMMA_OR_END && state != ARRAY_EXPECT_VALUE_OR_END) {
+      throw new IllegalStateException("Cannot end array");
+    }
+    popState();
+    skipWhitespace();
+    expect(']');
+    afterValue();
+  }
+
+  /**
+   * Peeks to see what the next value is.
+   *
+   * <p>May need to consume the input
+   */
+  Token peek() throws JsonParseException, IOException {
+    tryInitLookahead();
+    final byte state = peekState();
+    switch (state) {
+      case TOP_LEVEL, ARRAY_EXPECT_VALUE, OBJECT_EXPECT_VALUE, ARRAY_EXPECT_VALUE_OR_END -> {}
+      case ARRAY_EXPECT_COMMA_OR_END ->  {
+        skipWhitespace();
+        if (lookahead == ',') {
+          consume();
+          replaceState(ARRAY_EXPECT_VALUE);
+        }
+      }
+      default ->
+          throw new IllegalStateException("Cannot peek; next token is a field name or object end");
+    }
+    skipWhitespace();
+    return switch (lookahead) {
+      case '{' -> Token.OBJECT;
+      case '[' -> Token.ARRAY;
+      case '"' -> Token.STRING;
+      case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-' -> Token.NUMBER;
+      case 't', 'f' -> Token.BOOLEAN;
+      case 'n' -> Token.NULL;
+      case ']' -> {
+        switch (peekState()) {
+          // If a value is required (e.g. after a comma), the array end is a syntax error rather
+          // than a misuse of the reader
+          case ARRAY_EXPECT_VALUE_OR_END, ARRAY_EXPECT_COMMA_OR_END ->
+            throw new IllegalStateException("No value to peek, check for hasNext() before peeking");
+          default -> throw new JsonParseException("Unexpected character " + (char) lookahead);
+        }
+      }
+      default ->
+          throw new JsonParseException("Unexpected character " + (char) lookahead);
+    };
+  }
+
+  public boolean hasNext() throws IOException {
+    switch (peekState()) {
+      case OBJECT_EXPECT_FIELD_OR_END, OBJECT_EXPECT_COMMA_OR_END,
+           ARRAY_EXPECT_VALUE_OR_END, ARRAY_EXPECT_COMMA_OR_END -> {}
+      default -> throw new IllegalStateException("Cannot check for next value unless in array or object");
+    }
+
+    skipWhitespace();
+    return switch (lookahead) {
+      case ']', '}', -1 -> false;
+      default -> true;
+    };
+  }
+
+  public String readField() throws JsonParseException, IOException {
+    // "object": startObject() { (OBJECT_EXPECT_FIELD_OR_END) readField()
+    //   "foo": (OBJECT_EXPECT_VALUE) readValue() "bar" (OBJECT_EXPECT_COMMA_OR_END) readField() ,
+    //   "bar": (OBJECT_EXPECT_VALUE) peek() readValue() "baz" (OBJECT_EXPECT_COMMA_OR_END) readField() ,
+    //   "baz": (OBJECT_EXPECT_VALUE) readValue() "foo" (OBJECT_EXPECT_COMMA_OR_END) 
+    // }
+    switch (peekState()) {
+      case OBJECT_EXPECT_FIELD_OR_END -> {}
+      case OBJECT_EXPECT_COMMA_OR_END -> {
+        skipWhitespace();
+        expect(',');
+      }
+      default -> throw new IllegalStateException("Cannot read field outside of object");
+    }
+    final String field = readRawString();
+    skipWhitespace();
+    // We consume the ':' here, however the ',' after array elements are read when the next value is
+    // read so the behaviour is inconsistent
+    expect(':');
+    replaceState(OBJECT_EXPECT_VALUE);
+    return field;
+  }
+
+  boolean isEof() throws IOException {
+    if (peekState() != DONE) {
+      throw new IllegalStateException("Is EOF can only be checked in DONE state");
+    }
+    skipWhitespace();
+    return lookahead == -1;
   }
 
   private void skipWhitespace() throws IOException {
     while (true) {
-      switch (peek()) {
+      switch (lookahead) {
         case ' ', '\n', '\r', '\t' -> consume();
         default -> {
           return;
@@ -397,20 +530,86 @@ final class JsonReader implements AutoCloseable {
     }
   }
 
-  private int peek() throws IOException {
-    if (lookahead == NO_LOOKAHEAD) {
-      consume();
+  private void expect(char c) throws JsonParseException, IOException {
+    if (lookahead != c) {
+      throw new JsonParseException("Unexpected character \"" + (char) lookahead + "\", expected \"" + c + "\"");
     }
-
-    return lookahead;
+    consume();
   }
 
   private void consume() throws IOException {
-    lookahead = reader.read();
+    if (bufPosition >= bufLimit) {
+      final int count = reader.read(buf);
+      assert count != 0 : "BUFFER_SIZE cannot be 0";
+      if (count == -1) {
+        lookahead = -1;
+        return;
+      } else {
+        bufPosition = 0;
+        bufLimit = count;
+      }
+    }
+
+    lookahead = buf[bufPosition++];
+  }
+
+  private void tryInitLookahead() throws IOException {
+    if (lookahead == NO_LOOKAHEAD) {
+      consume();
+    }
+  }
+
+  @SuppressWarnings("MagicConstant")
+  @State
+  private byte peekState() {
+    final byte popped = state[stateSize - 1];
+    assert popped != 0 : "TOP_LEVEL must not be 0";
+    return popped;
+  }
+
+  private void pushState(@State final byte nextState) {
+    if (stateSize == state.length) {
+      state = Arrays.copyOf(state, stateSize * 2);
+    }
+    state[stateSize++] = nextState;
+  }
+
+  @SuppressWarnings("MagicConstant")
+  @State
+  private byte popState() {
+    final byte popped = state[--stateSize];
+    assert popped != 0 : "TOP_LEVEL must not be 0";
+    return popped;
+  }
+
+  private void replaceState(@State final byte nextState) {
+    state[stateSize - 1] = nextState;
   }
 
   @Override
   public void close() throws IOException {
     reader.close();
+  }
+
+  @Target({ElementType.METHOD, ElementType.PARAMETER})
+  @MagicConstant(intValues = {
+      TOP_LEVEL,
+      DONE,
+      OBJECT_EXPECT_FIELD_OR_END,
+      OBJECT_EXPECT_VALUE,
+      OBJECT_EXPECT_COMMA_OR_END,
+      ARRAY_EXPECT_VALUE,
+      ARRAY_EXPECT_VALUE_OR_END,
+      ARRAY_EXPECT_COMMA_OR_END
+  })
+  private @interface State {}
+
+  enum Token {
+    OBJECT,
+    ARRAY,
+    STRING,
+    BOOLEAN,
+    NUMBER,
+    NULL
   }
 }

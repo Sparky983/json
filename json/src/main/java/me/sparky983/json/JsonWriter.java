@@ -2,151 +2,238 @@ package me.sparky983.json;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.Arrays;
+import org.intellij.lang.annotations.MagicConstant;
 import org.jspecify.annotations.Nullable;
 
 final class JsonWriter implements AutoCloseable {
-  // Implementation notes:
-  //  Apart from Json.String, the primitive value toString() implementations have small
-  //  implementations, so they have been copied into this class. The complex value and Json.String
-  //  toString() implementations both depend on this class because the implementations are more
-  //  complex so copying would be too annoying to maintain.
+  private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
+
+  // Use byte to represent states results in ~5% speed up
+  private static final byte TOP_LEVEL = 1;
+  private static final byte OBJECT_EXPECT_FIELD_OR_END = 2;
+  private static final byte OBJECT_EXPECT_VALUE = 3;
+  private static final byte OBJECT_EXPECT_COMMA_OR_END = 4;
+  private static final byte ARRAY_EXPECT_VALUE_OR_END = 5;
+  private static final byte ARRAY_EXPECT_COMMA_OR_END = 6;
 
   private final Writer writer;
+
+  // Manage a stack ourselves results in ~5% speed up
+  private byte[] state = new byte[8];
+  private int stateSize = 1;
+
   private final @Nullable String indentation;
 
   JsonWriter(final Writer writer, final @Nullable String indentation) {
     this.writer = writer;
     this.indentation = indentation;
+    state[0] = TOP_LEVEL;
   }
 
-  void writeJson(final @Nullable Json json) throws IOException {
-    writeJson(json, 0);
-  }
-
-  private void writeJson(final @Nullable Json json, int level) throws IOException {
-    switch (json) {
-      case Json.Object object -> writeObject(object, level);
-      case Json.Array array -> writeArray(array, level);
-      case Json.String(String string) -> writeString(string);
-      case Json.Integer integer -> writeInteger(integer);
-      case Json.Decimal decimal -> writeDecimal(decimal);
-      case Json.Bool.TRUE -> writeTrue();
-      case Json.Bool.FALSE -> writeFalse();
-      case null -> writeNull();
-    }
-  }
-
-  private void writeObject(final Json.Object object, final int level) throws IOException {
-    final Map<String, @Nullable Json> members = object.members();
-
+  void startObject() throws IOException {
+    beforeValue();
     writer.write('{');
+    pushState(OBJECT_EXPECT_FIELD_OR_END);
+  }
 
-    if (indentation != null) {
-      writer.write('\n');
+  void endObject() throws IOException {
+    final byte scope = peekState();
+    if (scope != OBJECT_EXPECT_FIELD_OR_END && scope != OBJECT_EXPECT_COMMA_OR_END) {
+      throw new IllegalStateException("Cannot end object");
     }
 
-    final int membersLevel = level + 1;
-
-    final Iterator<Map.Entry<String, Json>> iterator = members.entrySet().iterator();
-
-    while (iterator.hasNext()) {
-      Map.Entry<String, Json> member = iterator.next();
-      indent(membersLevel);
-      writeString(member.getKey());
-      writer.write(':');
-      if (indentation != null) {
-        writer.write(' ');
-      }
-      writeJson(member.getValue(), membersLevel);
-      if (iterator.hasNext()) {
-        writer.write(',');
-      }
-      if (indentation != null) {
-        writer.write('\n');
-      }
+    if (scope == OBJECT_EXPECT_COMMA_OR_END && indentation != null) {
+      newlineAndIndent(stateSize - 2);
     }
 
-    indent(level);
+    popState();
     writer.write('}');
+    afterValue();
   }
 
-  private void writeArray(final Json.Array array, final int level) throws IOException {
-    final List<@Nullable Json> elements = array.elements();
-    final int size = elements.size();
-
-    writer.write('[');
+  void writeField(final String key) throws IOException {
+    switch (peekState()) {
+      case OBJECT_EXPECT_FIELD_OR_END -> {}
+      case OBJECT_EXPECT_COMMA_OR_END -> writer.write(',');
+      default -> throw new IllegalStateException("Cannot write a field outside of object");
+    }
 
     if (indentation != null) {
-      writer.write('\n');
+      newlineAndIndent(stateSize - 1);
     }
 
-    final int elementsLevel = level + 1;
-
-    // Avoid the iterator allocation; most List.copyOf implementations will return a random access
-    //  list implementation
-    for (int i = 0; i < size;) {
-      final Json element = elements.get(i);
-      indent(elementsLevel);
-      writeJson(element, elementsLevel);
-      if (++i != size) {
-        writer.write(',');
-      }
-      if (indentation != null) {
-        writer.write('\n');
-      }
+    writeEscapedString(key);
+    writer.write(':');
+    if (indentation != null) {
+      writer.write(' ');
     }
-
-    indent(level);
-    writer.write("]");
+    replaceState(OBJECT_EXPECT_VALUE);
   }
 
-  private void writeString(final String string) throws IOException {
-    writer.write('\"');
+  void startArray() throws IOException {
+    beforeValue();
+    writer.write('[');
+    pushState(ARRAY_EXPECT_VALUE_OR_END);
+  }
+
+  void endArray() throws IOException {
+    final byte state = peekState();
+    if (state != ARRAY_EXPECT_VALUE_OR_END && state != ARRAY_EXPECT_COMMA_OR_END) {
+      throw new IllegalStateException("Cannot end array");
+    }
+
+    if (state == ARRAY_EXPECT_COMMA_OR_END && indentation != null) {
+      newlineAndIndent(stateSize - 2);
+    }
+
+    popState();
+    writer.write(']');
+    afterValue();
+  }
+
+  void writeString(final String string) throws IOException {
+    beforeValue();
+    writeEscapedString(string);
+    afterValue();
+  }
+
+  private void writeEscapedString(final String string) throws IOException {
+    writer.write('"');
     final int length = string.length();
+    int chunkStart = 0;
     for (int i = 0; i < length; i++) {
-      char c = string.charAt(i);
+      final char c = string.charAt(i);
       switch (c) {
-        case '"' -> writer.write("\\");
-        case '\\' ->writer.write("\\\\");
-        case '\b' -> writer.write("\\b");
-        case '\f' -> writer.write("\\f");
-        case '\n' -> writer.write("\\n");
-        case '\r' -> writer.write("\\r");
-        case '\t' -> writer.write("\\t");
-        default -> writer.write(c);
+        case '"' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\\"");
+          chunkStart = i + 1;
+        }
+        case '\\' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\\\");
+          chunkStart = i + 1;
+        }
+        case '\b' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\b");
+          chunkStart = i + 1;
+        }
+        case '\f' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\f");
+          chunkStart = i + 1;
+        }
+        case '\n' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\n");
+          chunkStart = i + 1;
+        }
+        case '\r' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\r");
+          chunkStart = i + 1;
+        }
+        case '\t' -> {
+          writer.write(string, chunkStart, i - chunkStart);
+          writer.write("\\t");
+          chunkStart = i + 1;
+        }
+        default -> {
+          if (c < 0x0020) {
+            writer.write(string, chunkStart, i - chunkStart);
+            writeUnicodeEscape(c);
+            chunkStart = i + 1;
+          }
+        }
       }
     }
-    writer.write('\"');
+    writer.write(string, chunkStart, length - chunkStart);
+    writer.write('"');
   }
 
-  private void writeInteger(final Json.Integer integer) throws IOException {
-    writer.write(integer.value().toString());
+  private void writeUnicodeEscape(final char c) throws IOException {
+    writer.write("\\u00");
+    writer.write(HEX_DIGITS[(c >>> 4) & 0xF]);
+    writer.write(HEX_DIGITS[c & 0xF]);
   }
 
-  private void writeDecimal(final Json.Decimal decimal) throws IOException {
-    final String value = decimal.value().toString();
-    writer.write(value);
-    if (value.indexOf('.') == -1) {
-      writer.write(".0");
+  void writeInteger(final BigInteger integer) throws IOException {
+    beforeValue();
+    writer.write(integer.toString());
+    afterValue();
+  }
+
+  void writeDecimal(final BigDecimal decimal) throws IOException {
+    beforeValue();
+    final String value = decimal.toString();
+    final int dot = value.indexOf('.');
+    if (dot != -1) {
+      writer.write(value);
+    } else {
+      final int exponent = Math.max(value.indexOf('E'), value.indexOf('e'));
+      if (exponent == -1) {
+        writer.write(value);
+        writer.write(".0");
+      } else {
+        writer.write(value, 0, exponent);
+        writer.write(".0");
+        writer.write(value, exponent, value.length() - exponent);
+      }
+    }
+    afterValue();
+  }
+
+  void writeNull() throws IOException {
+    beforeValue();
+    writer.write("null");
+    afterValue();
+  }
+
+  void writeBool(final Json.Bool bool) throws IOException {
+    beforeValue();
+    writer.write(bool == Json.Bool.TRUE ? "true" : "false");
+    afterValue();
+  }
+
+  private void beforeValue() throws IOException {
+    switch (peekState()) {
+      case TOP_LEVEL, OBJECT_EXPECT_VALUE -> {}
+      case ARRAY_EXPECT_VALUE_OR_END -> {
+        if (indentation != null) {
+          newlineAndIndent(stateSize - 1);
+        }
+      }
+      case ARRAY_EXPECT_COMMA_OR_END -> {
+        writer.write(',');
+        if (indentation != null) {
+          newlineAndIndent(stateSize - 1);
+        }
+      }
+      case OBJECT_EXPECT_FIELD_OR_END, OBJECT_EXPECT_COMMA_OR_END ->
+          throw new IllegalStateException("Object field must be written before writing its value");
+      default -> throw new IllegalStateException();
     }
   }
 
-  private void writeNull() throws IOException {
-    writer.write("null");
+  private void afterValue() {
+    switch (popState()) {
+      case TOP_LEVEL -> {
+        assert stateSize == 0;
+      }
+      case OBJECT_EXPECT_VALUE -> pushState(OBJECT_EXPECT_COMMA_OR_END);
+      case ARRAY_EXPECT_VALUE_OR_END, ARRAY_EXPECT_COMMA_OR_END -> pushState(ARRAY_EXPECT_COMMA_OR_END);
+      default -> throw new IllegalStateException();
+    }
   }
 
-  private void writeTrue() throws IOException {
-    writer.write("true");
-  }
-
-  private void writeFalse() throws IOException {
-    writer.write("false");
-  }
-
-  private void indent(int amount) throws IOException {
+  private void newlineAndIndent(final int amount) throws IOException {
+    writer.write('\n');
     if (indentation != null) {
       for (int i = 0; i < amount; i++) {
         writer.write(indentation);
@@ -158,4 +245,44 @@ final class JsonWriter implements AutoCloseable {
   public void close() throws IOException {
     writer.close();
   }
+
+  @SuppressWarnings("MagicConstant")
+  @State
+  private byte peekState() {
+    if (stateSize == 0) {
+      throw new IllegalStateException("JSON has already been fully written");
+    }
+    final byte popped = state[stateSize - 1];
+    return popped;
+  }
+
+  private void pushState(@State final byte nextState) {
+    if (stateSize == state.length) {
+      state = Arrays.copyOf(state, stateSize * 2);
+    }
+    state[stateSize++] = nextState;
+  }
+
+  @SuppressWarnings("MagicConstant")
+  @State
+  private byte popState() {
+    final byte popped = state[--stateSize];
+    assert popped != 0 : "TOP_LEVEL must not be 0";
+    return popped;
+  }
+
+  private void replaceState(@State final byte nextState) {
+    state[stateSize - 1] = nextState;
+  }
+
+  @Target({ElementType.METHOD, ElementType.PARAMETER})
+  @MagicConstant(intValues = {
+      TOP_LEVEL,
+      OBJECT_EXPECT_FIELD_OR_END,
+      OBJECT_EXPECT_VALUE,
+      OBJECT_EXPECT_COMMA_OR_END,
+      ARRAY_EXPECT_VALUE_OR_END,
+      ARRAY_EXPECT_COMMA_OR_END
+  })
+  private @interface State {}
 }

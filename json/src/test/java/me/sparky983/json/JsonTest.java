@@ -1,11 +1,14 @@
 package me.sparky983.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class JsonTest {
   static final String JSON_STRING_COMPACT =
@@ -75,6 +78,24 @@ class JsonTest {
     final Json json = Json.read(JSON_STRING_COMPACT);
 
     assertEquals(JSON_OBJECT, json);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+      "{\"a\":1,\"a\":2}",
+      "{\"a\":null,\"a\":null}",
+      "{\"a\":1,\"b\":2,\"a\":3}",
+      "{\"object\":{\"a\":1,\"a\":2}}",
+      "[{\"a\":1,\"a\":2}]"
+  })
+  void testJsonRead_DuplicateMember_Throws(final String json) {
+    assertThrows(JsonParseException.class, () -> Json.read(json));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"]", "}", "[0,]", "[0,}", "{\"a\":]}", "{\"a\":}", "[{\"a\":]}]"})
+  void testJsonRead_UnexpectedEnd_Throws(final String json) {
+    assertThrows(JsonParseException.class, () -> Json.read(json));
   }
 
   @Test
